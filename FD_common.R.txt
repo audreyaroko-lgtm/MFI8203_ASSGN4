@@ -1,0 +1,87 @@
+
+---
+
+## 📁 File 2: `FD_common.R`
+
+```r
+# ============================================================================
+# FD_common.R – Shared functions for FD option pricing
+# ============================================================================
+
+# Black–Scholes analytical put price
+black_scholes_put <- function(S, K, r, sigma, T) {
+    if (T <= 0) return(pmax(K - S, 0))
+    d1 <- (log(S / K) + (r + sigma^2 / 2) * T) / (sigma * sqrt(T))
+    d2 <- d1 - sigma * sqrt(T)
+    put <- K * exp(-r * T) * pnorm(-d2) - S * pnorm(-d1)
+    return(put)
+}
+
+# θ-method FD solver for European put
+# theta = 0 (explicit), 1 (implicit), 0.5 (Crank-Nicolson)
+fd_put_option <- function(S0, K, r, sigma, T, Smax, N, M, theta) {
+    dS <- Smax / N
+    dt <- T / M
+    S <- seq(0, Smax, length.out = N + 1)
+
+    # Initialise solution matrix: rows = time, cols = space
+    V <- matrix(0, nrow = M + 1, ncol = N + 1)
+
+    # Terminal condition
+    V[M + 1, ] <- pmax(K - S, 0)
+
+    # Boundary conditions (applied at each time step)
+    # V(0, t) = K * exp(-r*(T-t))
+    # V(Smax, t) = 0
+
+    # Precompute coefficients (same for all time steps)
+    a <- numeric(N + 1)
+    b <- numeric(N + 1)
+    c <- numeric(N + 1)
+    for (i in 2:N) {
+        a[i] <- 0.5 * dt * (sigma^2 * i^2 - r * i)
+        b[i] <- 1 - dt * (sigma^2 * i^2 + r)
+        c[i] <- 0.5 * dt * (sigma^2 * i^2 + r * i)
+    }
+
+    # Time stepping (backward in time)
+    for (j in M:1) {
+        # Build tridiagonal system A * V[j, ] = d
+        A <- diag(0, N + 1)
+        d <- numeric(N + 1)
+
+        # Interior points
+        for (i in 2:N) {
+            A[i, i - 1] <- -theta * a[i]
+            A[i, i]     <- 1 - theta * b[i]
+            A[i, i + 1] <- -theta * c[i]
+
+            d[i] <- (1 - theta) * (a[i] * V[j + 1, i - 1] +
+                                   b[i] * V[j + 1, i] +
+                                   c[i] * V[j + 1, i + 1])
+        }
+
+        # Boundary conditions
+        A[1, 1] <- 1
+        d[1] <- K * exp(-r * (T - (j - 1) * dt))   # lower boundary
+        A[N + 1, N + 1] <- 1
+        d[N + 1] <- 0                               # upper boundary
+
+        # Solve
+        if (theta == 0) {
+            # Explicit: A is identity, so V[j, ] = d
+            V[j, ] <- d
+        } else {
+            V[j, ] <- solve(A, d)
+        }
+    }
+
+    return(list(
+        S = S,
+        V0 = V[1, ],          # price at t=0 for all S
+        V_full = V,
+        N = N, M = M,
+        dt = dt, dS = dS,
+        theta = theta
+    ))
+}
